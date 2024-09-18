@@ -1,0 +1,292 @@
+---
+title: "Salary Prediction_Data Preparation"
+output: html_document
+---
+
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(dplyr) 
+library(Metrics)
+library(MASS)
+library(truncreg)
+library(AER)
+library(survival)
+library(survminer)
+library(tidyverse)
+library(stringr)
+library(igraph)
+library(caret)
+library(pROC)
+library(kernlab)
+library(e1071)
+library(caTools)
+library(mboost)
+library(gbm)
+library(LiblineaR)
+library(mice)
+```
+
+```{r}
+data <- read.csv('eda_data.csv')
+summary(data)
+data
+```
+
+```{r}
+colSums(is.na(data))
+```
+
+```{r}
+table(data$job_simp)
+```
+
+```{r}
+data <- mutate(data, Job.Title = str_to_lower(Job.Title))
+```
+
+```{r}
+#Job Title Handling
+
+jobtitle_cleaner <- function(title) {
+  case_when(
+    str_detect(title, 'data scientist') ~ 'D-sci',
+    str_detect(title, 'data engineer') ~ 'D-eng',
+    str_detect(title, 'analyst') ~ 'analyst',
+    str_detect(title, 'machine learning') ~ 'ML',
+    str_detect(title, 'manager') ~ 'manager',
+    str_detect(title, 'director') ~ 'director',
+    str_detect(title, 'research') ~ 'R&D',
+    TRUE ~ 'na'
+  )
+}
+# Apply the function to create a new column 'Title'
+data$Title <- sapply(data$Job.Title, jobtitle_cleaner)
+# Display unique values in the 'Title' column
+table(data$Title)
+```
+
+```{r}
+table(data$seniority)
+```
+
+```{r}
+#Job Seniority Handling
+
+senior_list <- c('sr', 'sr.', 'senior', 'principal', 'research', 'lead', 'R&D', 'II', 'III')
+junior_list <- c('jr', 'jr.', 'junior')
+# Create a function to determine job seniority
+jobseniority <- function(title) {
+  case_when(
+    any(str_detect(title, paste(senior_list))) ~ 'Senior Prof',
+    any(str_detect(title, paste(junior_list))) ~ 'Junior Prof',
+    TRUE ~ 'No Desc'
+  )
+}
+# Apply the function to create a new column 'Job.Seniority'
+data$Job.Seniority <- sapply(data$Job.Title, jobseniority)
+# Display unique values in the 'Job.Seniority' column
+table(data$Job.Seniority)
+```
+
+```{r}
+table(data$Headquarters)
+```
+
+```{r}
+# Headquarters Handling
+
+data$Headquarters <- sapply(strsplit(data$Headquarters, ","), function(x) trimws(x[2]))
+
+# Display the count of each unique value in the 'Headquarters' column
+table(data$Headquarters)
+```
+
+```{r}
+table(data$Type.of.ownership)
+```
+
+```{r}
+# Type of Ownership Handling
+
+ownership_simplifier <- function(text) {
+  text_lower <- tolower(text)
+  if (str_detect(text_lower, 'private')) {
+    return('Private')
+  } else if (str_detect(text_lower, 'public')) {
+    return('Public')
+  } else if (str_detect(text_lower, '-1|unknown|school / school district|private practice / firm|contract')) {
+    return('Other Organization')
+  } else {
+    return(text)
+  }
+}
+# Apply the ownership_simplifier function to 'Type.of.ownership'
+data$Type.of.ownership <- sapply(data$Type.of.ownership, ownership_simplifier)
+table(data$Type.of.ownership)
+```
+
+```{r}
+table(data$Industry)
+```
+
+```{r}
+# Industry Handling
+
+data <- data %>% mutate(Industry = ifelse(Industry == '-1', 'Others', Industry))
+table(data$Industry)
+```
+
+```{r}
+table(data$Size)
+```
+
+```{r}
+# Company Size Handling
+
+data <- data %>% mutate(Size = ifelse(Size == '-1', 'Unknown', Size))
+table(data$Size)
+
+# Number of Employees categorized in Company Size
+data$Size <- ifelse(data$Size %in% c("1 to 50 employees", "51 to 200 employees"), "small", 
+                       ifelse(data$Size %in% c("201 to 500 employees", "501 to 1000 employees"), "medium", 
+                              ifelse(data$Size %in% c("1001 to 5000 employees", "5001 to 10000 employees", "10000+ employees"), "large", NA)))
+table(data$Size)
+```
+
+```{r}
+table(data$Revenue)
+```
+
+```{r}
+# Company Revenue Handling
+
+data <- data %>% mutate(Revenue = ifelse(Revenue == '-1', 'Unknown / Non-Applicable', Revenue))
+table(data$Revenue)
+
+# Revenue categorized by business size
+
+data$Revenue<- ifelse(data$Revenue == "Less than $1 million (USD)", "micro-bus", 
+                         ifelse(data$Revenue %in% c("$1 to $5 million (USD)", "$5 to $10 million (USD)"), "small-bus", 
+                                ifelse(data$Revenue %in% c("$10 to $25 million (USD)","$25 to $50 million (USD)", "$50 to $100 million (USD)"), "medium-bus", 
+                                       ifelse(data$Revenue %in% c("$100 to $500 million (USD)", "$500 million to $1 billion (USD)", "$1 to $2 billion (USD)", "$2 to $5 billion (USD)", "$5 to $10 billion (USD)", "$10+ billion (USD)"), "large-bus", NA))))
+table(data$Revenue)
+```
+```{r}
+# Impute Missing Value of Revenue and Size by MICE using polyreg method
+
+data <- data %>% mutate(Size = as.factor(Size), Revenue = as.factor(Revenue))
+
+init = mice(data, maxit = 0)
+meth = init$method
+predM = init$predictorMatrix
+meth[c("Size")] = "polyreg"
+meth[c("Revenue")] = "polyreg"
+
+imp_rev <- mice(data, m=5, method= meth, predictorMatrix = predM, maxit = 10, seed = 20)
+data <- complete(imp_rev)
+
+data
+```
+
+```{r}
+# Visualizing Rating column
+
+ggplot(data, aes(x = Rating)) +
+  geom_histogram(binwidth = 0.1, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Before handling -1 value", x = "Rating", y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+# Rating Handling
+
+# Convert -1 values to NA and replace NAs with the mean
+data$Rating <- ifelse(data$Rating == -1, NA, data$Rating)
+data$Rating <- ifelse(is.na(data$Rating), mean(data$Rating, na.rm = TRUE), data$Rating)
+# Create a histogram of Rating 
+ggplot(data, aes(x = Rating)) +
+  geom_histogram(binwidth = 0.1, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "After handling -1 value", x = "Rating", y = "Frequency") +
+  theme_minimal()
+# Bin Rating to Categorical
+data$Rating <- round(data$Rating)
+data <- data %>% mutate(Rating = cut(Rating, breaks = c(0.0, 1.0, 2.0, 3.0, 4.0, 5.0), labels = c("Very Dissatisfied", "Dissatisfied", "Neutral", "Satisfied", "Very Satisfied")))
+summary(data$Rating)
+
+```
+
+```{r}
+# Visualizing Founded column
+
+ggplot(data, aes(x = Founded)) +
+  geom_histogram(binwidth = 10, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "Before handling -1 value", x = "Founded", y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+# Founded Handling
+
+# Convert -1 values to NA and replace NAs with the median
+data$Founded <- ifelse(data$Founded == -1, NA, data$Founded)
+data$Founded <- ifelse(is.na(data$Founded), median(data$Founded, na.rm = TRUE), data$Founded)
+data$Founded <- as.integer(data$Founded)
+# Create a histogram for the 'Founded' column after handling -1 values
+ggplot(data, aes(x = Founded)) +
+  geom_histogram(binwidth = 10, fill = "blue", color = "black", alpha = 0.7) +
+  labs(title = "After handling -1 value", x = "Founded", y = "Frequency") +
+  theme_minimal()
+```
+
+```{r}
+table(data$hourly)
+```
+
+```{r}
+# Converting per hour salary to per year salary
+
+data <- data %>%  mutate(
+    min_salary = ifelse(hourly == 1, min_salary * 45 * 52 / 1000 / 2, min_salary),
+    max_salary = ifelse(hourly == 1, max_salary * 45 * 52 / 1000 / 2, max_salary),
+    avg_salary = ifelse(hourly == 1, avg_salary * 45 * 52 / 1000, avg_salary)
+  )
+```
+
+```{r}
+boxplot(data$age, horizontal= T)
+```
+
+
+```{r}
+# Age Handling - Assuming the age 18-70 are the working age group
+
+sum(data$age < 18)
+## [1] 290
+sum(data$age > 70)
+## [1] 156
+## There are 290 instances of age <18 & 156 instances of age > 70 which are outliers
+## To replace <18 outliers with IQR Q1 (30) & replace >70 outliers with IQR Q3(52)
+getWorkingAge <- data$age[data$age <66 & data$age > 23 & !is.na(data$age)]
+quantile(getWorkingAge)
+##   0%  25%  50%  75% 100% 
+##   24   30   39   52   62
+data$age[data$age<18] <- 30
+data$age[data$age>70] <- 52
+hist(data$age)
+```
+
+```{r}
+# Select wanted data
+
+data <- data %>% dplyr::select(X, Title, Job.Seniority, Rating, company_txt, num_comp, job_state, Headquarters, same_state, Size, Founded, Type.of.ownership, Industry, Sector, Revenue, min_salary, max_salary, avg_salary, age, python_yn, R_yn, spark, aws, excel)
+colnames(data) <- gsub("_", ".", tolower(colnames(data)))
+data <- data %>% rename(python = python.yn, r = r.yn, company = company.txt, competitor = num.comp)
+str(data)
+```
+
+```{r}
+# Export data
+
+write.csv(data, file = "prep_data.csv", row.names = FALSE)
+```

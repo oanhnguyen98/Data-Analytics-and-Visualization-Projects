@@ -1,0 +1,350 @@
+---
+title: "Salary Prediction_EDA"
+output: html_document
+---
+```{r}
+library(ggplot2)
+library(tidyverse)
+library(dplyr) 
+library(Metrics)
+library(MASS)
+library(truncreg)
+library(AER)
+library(survival)
+library(survminer)
+library(tidyverse)
+library(stringr)
+library(igraph)
+library(caret)
+library(pROC)
+library(kernlab)
+library(e1071)
+library(caTools)
+library(mboost)
+library(gbm)
+library(LiblineaR)
+library(reshape2)
+library(xgboost)
+library(naivebayes)
+```
+
+```{r}
+data <- read.csv('prep_data.csv')
+data
+```
+
+```{r}
+# Relationship between Age and Average Salary
+
+ggplot(data, mapping = aes(x = age, y = avg.salary )) + 
+  geom_point() + 
+  labs( x = "Age", y = "Average Salary", title = "Age vs Average Salary") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold")) 
+```
+
+```{r}
+# Compare Average Salary distribution by Revenue for each Company Size 
+
+ggplot(data = data, aes(x = size, y = avg.salary)) + 
+  geom_boxplot() +
+  labs( x = "Size", y = "Average Salary", title = "Company Size vs Average Salary") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+ggplot(data, aes(x = size, y = avg.salary, fill = revenue)) + geom_histogram(stat = 'identity') +
+  facet_wrap(~revenue)
+```
+
+```{r}
+# Compare Average Salary distribution for Rating (Job Satisfaction)
+
+ggplot(data, aes(x = rating, y = avg.salary)) +
+  geom_boxplot() + 
+  labs( x = "Rating", y = "Average Salary", title = "Rating vs Average Salary") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+```{r}
+# Compare Average Salary distribution for each Job Title
+
+#1
+ggplot(data, aes(x = title, y = avg.salary)) +
+  geom_boxplot() +
+  labs( x = "Job Title", y = "Average Salary", title = "Average Salary vs Job Title") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+#2
+exp_salary <- aggregate(avg.salary ~ title, data, FUN = mean)
+
+options(repr.plot.width = 10, repr.plot.height = 6)
+
+ggplot(exp_salary, aes(x = title, y = avg.salary, fill = title)) +
+  geom_bar(stat = "identity", color = "black") +
+  geom_text(aes(label = sprintf("$%.2f", avg.salary)),
+            position = position_dodge(width = 0.9),
+            vjust = -0.5, size = 3, color = "red", fontface = "bold") +
+  labs(title = "Average Salary by Job Title",
+       x = "Job Title",
+       y = "Average Salary",
+       caption = "") +
+  theme_minimal() +
+  theme(legend.position = "none", 
+        plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+        axis.title = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.caption = element_text(vjust = 6, face = "italic"),
+        panel.grid.minor.y = element_blank())
+```
+
+```{r}
+# Compare Rating (Job Satisfaction) and Company Size
+
+df1 <- data.frame(table(data$size, data$rating))
+names(df1) <- c("Size","Rating","Count")
+
+ggplot(data = df1, aes(x = Size, y = Count, fill = Rating)) + 
+  geom_bar(stat = "identity") +
+  labs( x = "Company Size", y = "Count", title = " Rating (Job Satisfaction) vs Company Size") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+```{r}
+# Compare Rating (Job Satisfaction) and Job Title
+
+df2 <- data.frame(table(data$title,data$rating))
+names(df2) <- c("Title","Rating","Count")
+
+ggplot(data = df2, aes(x = Title, y = Count, fill = Rating)) + 
+  geom_bar(stat = "identity") +
+  labs( x = "Job Title", y = "Count", title = " Rating (Job Satisfaction) vs Job Title") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+```
+
+```{r}
+# Top States Salary x Skills Required
+
+#1
+df3.1 <- data %>% group_by(job.state) %>% summarise(avg.salary = mean(avg.salary)) %>% arrange(desc(avg.salary)) %>% head(5) %>% pull(job.state)
+df3.1
+
+df3.2 <- data %>% group_by(job.state) %>% summarise(python = sum(python), r = sum(r), spark = sum(spark), aws = sum(aws),excel = sum(excel)) %>% filter(job.state %in% c('CA', 'IL', 'DC', 'MA', 'NJ')) %>% arrange(job.state) %>% ungroup() %>% as.data.frame() 
+print(df3.2)
+
+df3 <- gather(df3.2, key = "skill", value = "value", c("python", "r", "spark", "aws", "excel"))
+
+ggplot(df3, aes(x = job.state, y = value, fill = skill)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(x = "Highest Salary States", y = "Programming skill required", title = "Top 5 States Salary x Skills Required") +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"))
+
+#2
+average_salaries_by_state <- aggregate(avg.salary ~ job.state, data, FUN = mean)
+
+average_salaries_by_state <- average_salaries_by_state[order(-average_salaries_by_state$avg.salary), ]
+top_n_states <- 10
+options(repr.plot.width = 12, repr.plot.height = 6)
+
+ggplot(head(average_salaries_by_state, top_n_states), aes(x = avg.salary, y = job.state, fill = job.state)) +
+  geom_bar(stat = "identity", color = "black") +
+  geom_text(aes(label = sprintf("$%.2f", avg.salary)),
+            position = position_dodge(width = 0.9),
+            vjust = 0.5, hjust = -0.05, size = 2.5, color = "red", fontface = "bold") +
+  labs(title = sprintf("Top %d Average Data Science Salaries by State", top_n_states),
+       x = "Average Salary",
+       y = "State",
+       caption = "") +
+  theme_minimal() +
+  theme(legend.position = "none", 
+        plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+        axis.title = element_text(size = 12, face = "bold"),
+        axis.text.x = element_text(angle = 45, hjust = 1),
+        plot.caption = element_text(vjust = 6, face = "italic"),
+        panel.grid.minor.y = element_blank(),
+        panel.background = element_rect(fill = "#f4f4f4"))
+```
+
+```{r}
+# Salary Prediction - Regression
+
+# Feature Selection and Normalization
+sal_df <- dplyr::select(data, -c("x","industry","sector", "min.salary", "max.salary", "type.of.ownership", "same.state", "headquarters", "job.state", "competitor", "company", "founded"))
+norm_minmax <- function(x){(x - min(x)) /(max(x) - min(x))}
+sal_df[sapply(sal_df, is.numeric)] <- lapply(sal_df[sapply(sal_df, is.numeric)],norm_minmax)
+sal_df[sapply(sal_df, is.character)] <- lapply(sal_df[sapply(sal_df, is.character)],as.factor)
+str(sal_df)
+```
+
+```{r}
+# Splitting Data to training = 70%, testing = 30%
+
+set.seed(100)
+train <- createDataPartition(y = sal_df$avg.salary, p = 0.7, list = FALSE)
+training <- sal_df[train,]
+testing <- sal_df[-train,]
+
+training_x = training[,-6]
+training_y = training[,6]
+testing_x = testing[,-6]
+testing_y = testing[,6]
+```
+
+```{r}
+# Multiple Linear Regression Model
+
+# Create Multiple Regression Model
+set.seed(100)
+linear_model <- lm(avg.salary ~ ., data = training)
+summary(linear_model)
+# Predict Salary
+pred_sal_linear <- predict(linear_model, testing_x)
+# Evaluate Model
+mse <- mean((testing_y - pred_sal_linear)^2)
+mae <- MAE(testing_y, pred_sal_linear)
+rmse <-RMSE(testing_y,pred_sal_linear)
+r2 <- R2(testing_y, pred_sal_linear)
+model_metrics_linear <- cbind(mse,mae,rmse,r2)
+row.names(model_metrics_linear) <- "Linear Regression"
+model_metrics_linear
+```
+
+```{r}
+# Random Forest Model
+
+# Create Random Forest Model
+set.seed(100)
+rf <- train(avg.salary ~ ., data = training, method = 'rf', ntree = 100, maxdepth = 10, parms = list(split = 'information'))
+# Predict Salary
+pred_sal_rf<-predict(rf, testing_x)
+# Evaluate Model
+mse = mean((testing_y - pred_sal_rf)^2)
+mae = MAE(testing_y , pred_sal_rf)
+rmse =RMSE(testing_y ,pred_sal_rf)
+r2 = R2(testing_y, pred_sal_rf)
+model_metrics_rf <- cbind(mse,mae,rmse,r2)
+row.names(model_metrics_rf) <- "Random Forest"
+model_metrics_rf
+```
+
+```{r}
+# Gradient Boosting Model
+
+# Create gbm Model
+set.seed(100)
+gbm <- gbm(avg.salary ~ ., data = training, distribution="gaussian")
+# Predict Salary
+pred_sal_gbm<-predict(gbm ,testing_x)
+# Evaluate Model
+mse = mean((testing_y - pred_sal_gbm)^2)
+mae = MAE(testing_y , pred_sal_gbm)
+rmse =RMSE(testing_y ,pred_sal_gbm)
+r2 = R2(testing_y, pred_sal_gbm)
+model_metrics_gbm <- cbind(mse,mae,rmse,r2)
+row.names(model_metrics_gbm) <- "Stochastic Gradient Boosting"
+model_metrics_gbm
+```
+
+```{r}
+# XGBoost Model
+
+# Create XGboost Model
+set.seed(100)
+xgb_train = xgb.DMatrix(data = data.matrix(training_x), label = training_y)
+xgb_test = xgb.DMatrix(data = data.matrix(testing_x), label = testing_y)
+xgboostModel = xgboost(data = xgb_train, max.depth = 3, nrounds = 100, verbose = 0)
+# Predict Salary
+pred_sal_xgb = predict(xgboostModel, xgb_test)
+# Evaluate Model
+mse = mean((testing_y - pred_sal_xgb)^2)
+mae = MAE(testing_y , pred_sal_xgb)
+rmse =RMSE(testing_y ,pred_sal_xgb)
+r2 = R2(testing_y, pred_sal_xgb)
+model_metrics_xgb <- cbind(mse,mae,rmse,r2)
+row.names(model_metrics_xgb) <- "XGBoost"
+model_metrics_xgb
+```
+
+```{r}
+# Evaluation for Regression Models
+
+overall <- rbind(model_metrics_linear, model_metrics_rf ,model_metrics_gbm, model_metrics_xgb)
+overall
+```
+
+```{r}
+# Job Satisfaction Prediction - Classification
+
+# Feature Selection and Normalization
+rat_df <- dplyr::select(data, -c("x","industry","sector", "min.salary", "max.salary", "type.of.ownership", "same.state", "headquarters", "job.state", "competitor", "company", "founded"))
+
+rat_df <- rat_df %>% mutate (rating = as.factor(rating), size = as.factor(size), revenue = as.factor(revenue), title = as.factor(title), job.seniority = as.factor(job.seniority))
+norm_minmax <- function(x){(x-min(x))/(max(x)-min(x))}
+rat_df[sapply(rat_df, is.numeric)] <- lapply(rat_df[sapply(rat_df, is.numeric)],norm_minmax)
+str(rat_df)
+```
+
+```{r}
+# Splitting Data to training = 70%, testing = 30%.
+
+set.seed(100)
+rat_train <- createDataPartition(y = rat_df$rating, p = 0.7, list = FALSE)
+rat_training <- rat_df[rat_train,]
+rat_testing <- rat_df[-rat_train,]
+
+rat_training_x = rat_training[, -3]
+rat_training_y = rat_training[,3]
+rat_testing_x = rat_testing[,-3]
+rat_testing_y = rat_testing[,3]
+```
+
+```{r}
+# Random Forest Model
+
+# Training Model and Predicting with Random Forest 
+set.seed(100)
+rat_rf <- train(as.factor(rating) ~ ., data = rat_training, method = 'rf', ntree = 100, maxdepth = 10, parms = list(split = 'information'))
+pred_rat_rf <- predict(rat_rf, rat_testing_x)
+confusionMatrix(pred_rat_rf, as.factor(rat_testing_y))
+```
+
+```{r}
+# Extreme Gradient Boosting Model
+
+# Train Model with Extreme Boost 
+set.seed(100)
+rat_xgb_train <- xgb.DMatrix(data = data.matrix(rat_training_x), label = rat_training_y)
+rat_xgb_test <- xgb.DMatrix(data = data.matrix(rat_testing_x), label=rat_testing_y)
+rat_xgb <- xgboost(rat_xgb_train, max.depth = 3, nrounds=100, verbose=0)
+# Make predictions with Extreme Boost 
+pred_rat_xgb <- predict(rat_xgb, rat_xgb_test)
+pred_rat_xgb[(pred_rat_xgb > 4)] = 4
+pred_rat_xgb_asfactor <- as.factor((levels(rat_testing_y))[round(pred_rat_xgb)])
+confusionMatrix(pred_rat_xgb_asfactor, rat_testing_y)
+
+```
+
+```{r}
+# Naive Bayes Model
+
+# Train Model and Predicting with Naive Bayes 
+set.seed(100)
+rat_nb <- naiveBayes(as.factor(rating) ~ ., data =rat_training)
+pred_rat_nb <- predict(rat_nb, rat_testing_x)
+confusionMatrix(pred_rat_nb, as.factor(rat_testing_y))
+```
+
+```{r}
+# Gaussian Naive Bayes Model
+
+# Train Model with Gaussian Naive Bayes 
+set.seed(100)
+rat_gnb <- gaussian_naive_bayes(x = data.matrix(rat_training_x), y = rat_training_y)
+pred_rat_gnb <- predict(rat_gnb, data.matrix(rat_testing_x))
+confusionMatrix(pred_rat_gnb, as.factor(rat_testing_y))
+```
+
+```{r}
+# N-Way ANOVA with Interactions
+
+results <- aov(formula = avg.salary ~ title*job.seniority*python*r*spark*aws*excel, data)
+summary(results)
+```
+
